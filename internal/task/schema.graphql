@@ -1,0 +1,16 @@
+interface Node {
+  id: ID!
+}
+
+type Task implements Node {
+  id: ID!
+  title: String!
+  # TODO: implements
+  # user: User!
+}
+
+type Query {
+  node(id: ID!): Node
+  task(id: ID!): Task
+  tasks: [Task!]!
+}
