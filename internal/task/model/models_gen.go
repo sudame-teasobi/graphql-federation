@@ -13,7 +13,17 @@ type Query struct {
 type Task struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
+	User  *User  `json:"user"`
 }
 
 func (Task) IsNode()            {}
 func (this Task) GetID() string { return this.ID }
+
+func (Task) IsEntity() {}
+
+type User struct {
+	ID string `json:"id"`
+}
+
+func (User) IsNode()            {}
+func (this User) GetID() string { return this.ID }

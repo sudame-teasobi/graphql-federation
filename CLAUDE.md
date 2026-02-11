@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクト概要
 
-GraphQL Federation を学習・実験するためのリポジトリ。Go + gqlgen で構成された2つの独立した GraphQL サブグラフサービス（User / Task）を持つ。Federation はまだ有効化されていない（gqlgen.*.yml 内の federation セクションがコメントアウト状態）。
+GraphQL Federation を学習・実験するためのリポジトリ。Go + gqlgen で構成された2つの GraphQL サブグラフサービス（User / Task）を持つ。Federation v2 が有効化済みで、各サービスは `@key` ディレクティブによるエンティティ解決をサポートしている。
 
 ## よく使うコマンド
 
@@ -25,6 +25,7 @@ mise install
 - **Go モジュール名**: `gft`
 - **gqlgen 設定**: サービスごとに個別の設定ファイル（`gqlgen.user.yml`, `gqlgen.task.yml`）
 - **コード生成エントリーポイント**: `generate.go`（`//go:generate` ディレクティブで両サービスの gqlgen を実行）
+- **Federation**: v2（`computed_requires: true`）。両サービスで有効化済み
 
 ### サービス構成
 
@@ -39,9 +40,19 @@ internal/<service>/
   repository.go                # インメモリデータリポジトリ
   model/models_gen.go          # gqlgen 自動生成モデル（編集禁止）
   graph/generated.go           # gqlgen 自動生成コード（編集禁止）
+  graph/federation.go          # gqlgen 自動生成 Federation ランタイム（編集禁止）
   graph/resolver/resolver.go   # DI 用 Resolver 構造体（手動編集）
   graph/resolver/schema.resolvers.go  # リゾルバ実装（手動編集、生成時にマージされる）
+  graph/resolver/entity.resolvers.go  # Federation エンティティリゾルバ（手動編集）
 ```
+
+### Federation のエンティティ関係
+
+各サービスは他サービスのエンティティをスタブ型として定義し、`@key(fields: "id")` で参照している:
+
+- **User Service**: `User` エンティティを所有。`Task` のスタブ型を定義。`User.tasks` フィールドで Task を参照
+- **Task Service**: `Task` エンティティを所有。`User` のスタブ型を定義。`Task.user` フィールドで User を参照
+- タスクデータには `userId` フィールドがあり、User との関連を保持
 
 ### ID 体系
 
@@ -49,5 +60,5 @@ Node インターフェースの ID は `<type>:<index>` 形式（例: `user:0`,
 
 ### 手動編集ファイル vs 自動生成ファイル
 
-- **手動編集**: `schema.graphql`, `resolver.go`, `schema.resolvers.go`, `repository.go`, `id.go`, `main.go`
-- **自動生成（編集禁止）**: `generated.go`, `models_gen.go`
+- **手動編集**: `schema.graphql`, `resolver.go`, `schema.resolvers.go`, `entity.resolvers.go`, `repository.go`, `id.go`, `main.go`
+- **自動生成（編集禁止）**: `generated.go`, `models_gen.go`, `federation.go`

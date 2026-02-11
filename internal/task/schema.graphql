@@ -2,15 +2,18 @@ interface Node {
   id: ID!
 }
 
-type Task implements Node {
+type Task implements Node @key(fields: "id") {
   id: ID!
   title: String!
-  # TODO: implements
-  # user: User!
+  user: User!
 }
 
 type Query {
   node(id: ID!): Node
   task(id: ID!): Task
   tasks: [Task!]!
+}
+
+type User implements Node {
+  id: ID!
 }

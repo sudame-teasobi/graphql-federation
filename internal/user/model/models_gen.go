@@ -10,10 +10,20 @@ type Node interface {
 type Query struct {
 }
 
+type Task struct {
+	ID string `json:"id"`
+}
+
+func (Task) IsNode()            {}
+func (this Task) GetID() string { return this.ID }
+
 type User struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID    string  `json:"id"`
+	Name  string  `json:"name"`
+	Tasks []*Task `json:"tasks"`
 }
 
 func (User) IsNode()            {}
 func (this User) GetID() string { return this.ID }
+
+func (User) IsEntity() {}

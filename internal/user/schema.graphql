@@ -2,13 +2,18 @@ interface Node {
   id: ID!
 }
 
-type User implements Node {
+type User implements Node @key(fields: "id") {
   id: ID!
   name: String!
+  tasks: [Task!]!
 }
 
 type Query {
   users: [User!]!
   user(id: ID!): User
   node(id: ID!): Node
+}
+
+type Task implements Node {
+  id: ID!
 }

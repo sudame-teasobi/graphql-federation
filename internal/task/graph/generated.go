@@ -14,6 +14,7 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/introspection"
+	"github.com/99designs/gqlgen/plugin/federation/fedruntime"
 	gqlparser "github.com/vektah/gqlparser/v2"
 	"github.com/vektah/gqlparser/v2/ast"
 )
@@ -38,6 +39,7 @@ type Config struct {
 }
 
 type ResolverRoot interface {
+	Entity() EntityResolver
 	Query() QueryResolver
 }
 
@@ -45,18 +47,36 @@ type DirectiveRoot struct {
 }
 
 type ComplexityRoot struct {
+	Entity struct {
+		FindTaskByID func(childComplexity int, id string) int
+	}
+
 	Query struct {
-		Node  func(childComplexity int, id string) int
-		Task  func(childComplexity int, id string) int
-		Tasks func(childComplexity int) int
+		Node               func(childComplexity int, id string) int
+		Task               func(childComplexity int, id string) int
+		Tasks              func(childComplexity int) int
+		__resolve__service func(childComplexity int) int
+		__resolve_entities func(childComplexity int, representations []map[string]any) int
 	}
 
 	Task struct {
 		ID    func(childComplexity int) int
 		Title func(childComplexity int) int
+		User  func(childComplexity int) int
+	}
+
+	User struct {
+		ID func(childComplexity int) int
+	}
+
+	_Service struct {
+		SDL func(childComplexity int) int
 	}
 }
 
+type EntityResolver interface {
+	FindTaskByID(ctx context.Context, id string) (*model.Task, error)
+}
 type QueryResolver interface {
 	Node(ctx context.Context, id string) (model.Node, error)
 	Task(ctx context.Context, id string) (*model.Task, error)
@@ -81,6 +101,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 	ec := executionContext{nil, e, 0, 0, nil}
 	_ = ec
 	switch typeName + "." + field {
+
+	case "Entity.findTaskByID":
+		if e.complexity.Entity.FindTaskByID == nil {
+			break
+		}
+
+		args, err := ec.field_Entity_findTaskByID_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Entity.FindTaskByID(childComplexity, args["id"].(string)), true
 
 	case "Query.node":
 		if e.complexity.Query.Node == nil {
@@ -110,6 +142,23 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.Tasks(childComplexity), true
+	case "Query._service":
+		if e.complexity.Query.__resolve__service == nil {
+			break
+		}
+
+		return e.complexity.Query.__resolve__service(childComplexity), true
+	case "Query._entities":
+		if e.complexity.Query.__resolve_entities == nil {
+			break
+		}
+
+		args, err := ec.field_Query__entities_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.__resolve_entities(childComplexity, args["representations"].([]map[string]any)), true
 
 	case "Task.id":
 		if e.complexity.Task.ID == nil {
@@ -123,6 +172,26 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Task.Title(childComplexity), true
+	case "Task.user":
+		if e.complexity.Task.User == nil {
+			break
+		}
+
+		return e.complexity.Task.User(childComplexity), true
+
+	case "User.id":
+		if e.complexity.User.ID == nil {
+			break
+		}
+
+		return e.complexity.User.ID(childComplexity), true
+
+	case "_Service.sdl":
+		if e.complexity._Service.SDL == nil {
+			break
+		}
+
+		return e.complexity._Service.SDL(childComplexity), true
 
 	}
 	return 0, false
@@ -217,11 +286,10 @@ var sources = []*ast.Source{
   id: ID!
 }
 
-type Task implements Node {
+type Task implements Node @key(fields: "id") {
   id: ID!
   title: String!
-  # TODO: implements
-  # user: User!
+  user: User!
 }
 
 type Query {
@@ -229,13 +297,97 @@ type Query {
   task(id: ID!): Task
   tasks: [Task!]!
 }
+
+type User implements Node {
+  id: ID!
+}
 `, BuiltIn: false},
+	{Name: "../../../federation/directives.graphql", Input: `
+	directive @authenticated on FIELD_DEFINITION | OBJECT | INTERFACE | SCALAR | ENUM
+	directive @composeDirective(name: String!) repeatable on SCHEMA
+	directive @extends on OBJECT | INTERFACE
+	directive @external on OBJECT | FIELD_DEFINITION
+	directive @key(fields: FieldSet!, resolvable: Boolean = true) repeatable on OBJECT | INTERFACE
+	directive @inaccessible on
+	  | ARGUMENT_DEFINITION
+	  | ENUM
+	  | ENUM_VALUE
+	  | FIELD_DEFINITION
+	  | INPUT_FIELD_DEFINITION
+	  | INPUT_OBJECT
+	  | INTERFACE
+	  | OBJECT
+	  | SCALAR
+	  | UNION
+	directive @interfaceObject on OBJECT
+	directive @link(import: [String!], url: String!) repeatable on SCHEMA
+	directive @override(from: String!, label: String) on FIELD_DEFINITION
+	directive @policy(policies: [[federation__Policy!]!]!) on
+	  | FIELD_DEFINITION
+	  | OBJECT
+	  | INTERFACE
+	  | SCALAR
+	  | ENUM
+	directive @provides(fields: FieldSet!) on FIELD_DEFINITION
+	directive @requires(fields: FieldSet!) on FIELD_DEFINITION
+	directive @requiresScopes(scopes: [[federation__Scope!]!]!) on
+	  | FIELD_DEFINITION
+	  | OBJECT
+	  | INTERFACE
+	  | SCALAR
+	  | ENUM
+	directive @shareable repeatable on FIELD_DEFINITION | OBJECT
+	directive @tag(name: String!) repeatable on
+	  | ARGUMENT_DEFINITION
+	  | ENUM
+	  | ENUM_VALUE
+	  | FIELD_DEFINITION
+	  | INPUT_FIELD_DEFINITION
+	  | INPUT_OBJECT
+	  | INTERFACE
+	  | OBJECT
+	  | SCALAR
+	  | UNION
+	scalar _Any
+	scalar FieldSet
+	scalar federation__Policy
+	scalar federation__Scope
+`, BuiltIn: true},
+	{Name: "../../../federation/entity.graphql", Input: `
+# a union of all types that use the @key directive
+union _Entity = Task
+
+# fake type to build resolver interfaces for users to implement
+type Entity {
+	findTaskByID(id: ID!,): Task!
+}
+
+type _Service {
+  sdl: String
+}
+
+extend type Query {
+  _entities(representations: [_Any!]!): [_Entity]!
+  _service: _Service!
+}
+`, BuiltIn: true},
 }
 var parsedSchema = gqlparser.MustLoadSchema(sources...)
 
 // endregion ************************** generated!.gotpl **************************
 
 // region    ***************************** args.gotpl *****************************
+
+func (ec *executionContext) field_Entity_findTaskByID_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	return args, nil
+}
 
 func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
@@ -245,6 +397,17 @@ func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query__entities_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "representations", ec.unmarshalN_Any2ᚕmapᚄ)
+	if err != nil {
+		return nil, err
+	}
+	args["representations"] = arg0
 	return args, nil
 }
 
@@ -322,6 +485,55 @@ func (ec *executionContext) field___Type_fields_args(ctx context.Context, rawArg
 
 // region    **************************** field.gotpl *****************************
 
+func (ec *executionContext) _Entity_findTaskByID(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Entity_findTaskByID,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Entity().FindTaskByID(ctx, fc.Args["id"].(string))
+		},
+		nil,
+		ec.marshalNTask2ᚖgftᚋinternalᚋtaskᚋmodelᚐTask,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Entity_findTaskByID(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Entity",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Task_id(ctx, field)
+			case "title":
+				return ec.fieldContext_Task_title(ctx, field)
+			case "user":
+				return ec.fieldContext_Task_user(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Task", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Entity_findTaskByID_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_node(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -392,6 +604,8 @@ func (ec *executionContext) fieldContext_Query_task(ctx context.Context, field g
 				return ec.fieldContext_Task_id(ctx, field)
 			case "title":
 				return ec.fieldContext_Task_title(ctx, field)
+			case "user":
+				return ec.fieldContext_Task_user(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Task", field.Name)
 		},
@@ -438,8 +652,84 @@ func (ec *executionContext) fieldContext_Query_tasks(_ context.Context, field gr
 				return ec.fieldContext_Task_id(ctx, field)
 			case "title":
 				return ec.fieldContext_Task_title(ctx, field)
+			case "user":
+				return ec.fieldContext_Task_user(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Task", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query__entities(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query__entities,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.__resolve_entities(ctx, fc.Args["representations"].([]map[string]any)), nil
+		},
+		nil,
+		ec.marshalN_Entity2ᚕgithubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚋfedruntimeᚐEntity,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query__entities(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type _Entity does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query__entities_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query__service(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query__service,
+		func(ctx context.Context) (any, error) {
+			return ec.__resolve__service(ctx)
+		},
+		nil,
+		ec.marshalN_Service2githubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚋfedruntimeᚐService,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query__service(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "sdl":
+				return ec.fieldContext__Service_sdl(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type _Service", field.Name)
 		},
 	}
 	return fc, nil
@@ -601,6 +891,97 @@ func (ec *executionContext) _Task_title(ctx context.Context, field graphql.Colle
 func (ec *executionContext) fieldContext_Task_title(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Task",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Task_user(ctx context.Context, field graphql.CollectedField, obj *model.Task) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Task_user,
+		func(ctx context.Context) (any, error) {
+			return obj.User, nil
+		},
+		nil,
+		ec.marshalNUser2ᚖgftᚋinternalᚋtaskᚋmodelᚐUser,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Task_user(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Task",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_User_id(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type User", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _User_id(ctx context.Context, field graphql.CollectedField, obj *model.User) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_User_id,
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		ec.marshalNID2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_User_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "User",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ID does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) __Service_sdl(ctx context.Context, field graphql.CollectedField, obj *fedruntime.Service) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext__Service_sdl,
+		func(ctx context.Context) (any, error) {
+			return obj.SDL, nil
+		},
+		nil,
+		ec.marshalOString2string,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext__Service_sdl(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "_Service",
 		Field:      field,
 		IsMethod:   false,
 		IsResolver: false,
@@ -2065,6 +2446,13 @@ func (ec *executionContext) _Node(ctx context.Context, sel ast.SelectionSet, obj
 	switch obj := (obj).(type) {
 	case nil:
 		return graphql.Null
+	case model.User:
+		return ec._User(ctx, sel, &obj)
+	case *model.User:
+		if obj == nil {
+			return graphql.Null
+		}
+		return ec._User(ctx, sel, obj)
 	case model.Task:
 		return ec._Task(ctx, sel, &obj)
 	case *model.Task:
@@ -2081,9 +2469,93 @@ func (ec *executionContext) _Node(ctx context.Context, sel ast.SelectionSet, obj
 	}
 }
 
+func (ec *executionContext) __Entity(ctx context.Context, sel ast.SelectionSet, obj fedruntime.Entity) graphql.Marshaler {
+	switch obj := (obj).(type) {
+	case nil:
+		return graphql.Null
+	case model.Task:
+		return ec._Task(ctx, sel, &obj)
+	case *model.Task:
+		if obj == nil {
+			return graphql.Null
+		}
+		return ec._Task(ctx, sel, obj)
+	default:
+		if typedObj, ok := obj.(graphql.Marshaler); ok {
+			return typedObj
+		} else {
+			panic(fmt.Errorf("unexpected type %T; non-generated variants of _Entity must implement graphql.Marshaler", obj))
+		}
+	}
+}
+
 // endregion ************************** interface.gotpl ***************************
 
 // region    **************************** object.gotpl ****************************
+
+var entityImplementors = []string{"Entity"}
+
+func (ec *executionContext) _Entity(ctx context.Context, sel ast.SelectionSet) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, entityImplementors)
+	ctx = graphql.WithFieldContext(ctx, &graphql.FieldContext{
+		Object: "Entity",
+	})
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		innerCtx := graphql.WithRootFieldContext(ctx, &graphql.RootFieldContext{
+			Object: field.Name,
+			Field:  field,
+		})
+
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Entity")
+		case "findTaskByID":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Entity_findTaskByID(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
 
 var queryImplementors = []string{"Query"}
 
@@ -2164,6 +2636,50 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "_entities":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query__entities(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "_service":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query__service(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "__type":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Query___type(ctx, field)
@@ -2195,7 +2711,7 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 	return out
 }
 
-var taskImplementors = []string{"Task", "Node"}
+var taskImplementors = []string{"Task", "Node", "_Entity"}
 
 func (ec *executionContext) _Task(ctx context.Context, sel ast.SelectionSet, obj *model.Task) graphql.Marshaler {
 	fields := graphql.CollectFields(ec.OperationContext, sel, taskImplementors)
@@ -2216,6 +2732,86 @@ func (ec *executionContext) _Task(ctx context.Context, sel ast.SelectionSet, obj
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "user":
+			out.Values[i] = ec._Task_user(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var userImplementors = []string{"User", "Node"}
+
+func (ec *executionContext) _User(ctx context.Context, sel ast.SelectionSet, obj *model.User) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, userImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("User")
+		case "id":
+			out.Values[i] = ec._User_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var _ServiceImplementors = []string{"_Service"}
+
+func (ec *executionContext) __Service(ctx context.Context, sel ast.SelectionSet, obj *fedruntime.Service) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, _ServiceImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("_Service")
+		case "sdl":
+			out.Values[i] = ec.__Service_sdl(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -2590,6 +3186,22 @@ func (ec *executionContext) marshalNBoolean2bool(ctx context.Context, sel ast.Se
 	return res
 }
 
+func (ec *executionContext) unmarshalNFieldSet2string(ctx context.Context, v any) (string, error) {
+	res, err := graphql.UnmarshalString(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNFieldSet2string(ctx context.Context, sel ast.SelectionSet, v string) graphql.Marshaler {
+	_ = sel
+	res := graphql.MarshalString(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
+}
+
 func (ec *executionContext) unmarshalNID2string(ctx context.Context, v any) (string, error) {
 	res, err := graphql.UnmarshalID(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -2620,6 +3232,10 @@ func (ec *executionContext) marshalNString2string(ctx context.Context, sel ast.S
 		}
 	}
 	return res
+}
+
+func (ec *executionContext) marshalNTask2gftᚋinternalᚋtaskᚋmodelᚐTask(ctx context.Context, sel ast.SelectionSet, v model.Task) graphql.Marshaler {
+	return ec._Task(ctx, sel, &v)
 }
 
 func (ec *executionContext) marshalNTask2ᚕᚖgftᚋinternalᚋtaskᚋmodelᚐTaskᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Task) graphql.Marshaler {
@@ -2674,6 +3290,110 @@ func (ec *executionContext) marshalNTask2ᚖgftᚋinternalᚋtaskᚋmodelᚐTask
 		return graphql.Null
 	}
 	return ec._Task(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNUser2ᚖgftᚋinternalᚋtaskᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v *model.User) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._User(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalN_Any2map(ctx context.Context, v any) (map[string]any, error) {
+	res, err := graphql.UnmarshalMap(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalN_Any2map(ctx context.Context, sel ast.SelectionSet, v map[string]any) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	_ = sel
+	res := graphql.MarshalMap(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
+}
+
+func (ec *executionContext) unmarshalN_Any2ᚕmapᚄ(ctx context.Context, v any) ([]map[string]any, error) {
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]map[string]any, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalN_Any2map(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalN_Any2ᚕmapᚄ(ctx context.Context, sel ast.SelectionSet, v []map[string]any) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalN_Any2map(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalN_Entity2ᚕgithubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚋfedruntimeᚐEntity(ctx context.Context, sel ast.SelectionSet, v []fedruntime.Entity) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalO_Entity2githubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚋfedruntimeᚐEntity(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+
+	return ret
+}
+
+func (ec *executionContext) marshalN_Service2githubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚋfedruntimeᚐService(ctx context.Context, sel ast.SelectionSet, v fedruntime.Service) graphql.Marshaler {
+	return ec.__Service(ctx, sel, &v)
 }
 
 func (ec *executionContext) marshalN__Directive2githubᚗcomᚋ99designsᚋgqlgenᚋgraphqlᚋintrospectionᚐDirective(ctx context.Context, sel ast.SelectionSet, v introspection.Directive) graphql.Marshaler {
@@ -2929,6 +3649,158 @@ func (ec *executionContext) marshalN__TypeKind2string(ctx context.Context, sel a
 	return res
 }
 
+func (ec *executionContext) unmarshalNfederation__Policy2string(ctx context.Context, v any) (string, error) {
+	res, err := graphql.UnmarshalString(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNfederation__Policy2string(ctx context.Context, sel ast.SelectionSet, v string) graphql.Marshaler {
+	_ = sel
+	res := graphql.MarshalString(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
+}
+
+func (ec *executionContext) unmarshalNfederation__Policy2ᚕstringᚄ(ctx context.Context, v any) ([]string, error) {
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]string, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNfederation__Policy2string(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalNfederation__Policy2ᚕstringᚄ(ctx context.Context, sel ast.SelectionSet, v []string) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalNfederation__Policy2string(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) unmarshalNfederation__Policy2ᚕᚕstringᚄ(ctx context.Context, v any) ([][]string, error) {
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([][]string, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNfederation__Policy2ᚕstringᚄ(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalNfederation__Policy2ᚕᚕstringᚄ(ctx context.Context, sel ast.SelectionSet, v [][]string) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalNfederation__Policy2ᚕstringᚄ(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) unmarshalNfederation__Scope2string(ctx context.Context, v any) (string, error) {
+	res, err := graphql.UnmarshalString(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNfederation__Scope2string(ctx context.Context, sel ast.SelectionSet, v string) graphql.Marshaler {
+	_ = sel
+	res := graphql.MarshalString(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
+}
+
+func (ec *executionContext) unmarshalNfederation__Scope2ᚕstringᚄ(ctx context.Context, v any) ([]string, error) {
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]string, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNfederation__Scope2string(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalNfederation__Scope2ᚕstringᚄ(ctx context.Context, sel ast.SelectionSet, v []string) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalNfederation__Scope2string(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) unmarshalNfederation__Scope2ᚕᚕstringᚄ(ctx context.Context, v any) ([][]string, error) {
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([][]string, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNfederation__Scope2ᚕstringᚄ(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalNfederation__Scope2ᚕᚕstringᚄ(ctx context.Context, sel ast.SelectionSet, v [][]string) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalNfederation__Scope2ᚕstringᚄ(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
 func (ec *executionContext) unmarshalOBoolean2bool(ctx context.Context, v any) (bool, error) {
 	res, err := graphql.UnmarshalBoolean(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -2966,6 +3838,54 @@ func (ec *executionContext) marshalONode2gftᚋinternalᚋtaskᚋmodelᚐNode(ct
 	return ec._Node(ctx, sel, v)
 }
 
+func (ec *executionContext) unmarshalOString2string(ctx context.Context, v any) (string, error) {
+	res, err := graphql.UnmarshalString(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOString2string(ctx context.Context, sel ast.SelectionSet, v string) graphql.Marshaler {
+	_ = sel
+	_ = ctx
+	res := graphql.MarshalString(v)
+	return res
+}
+
+func (ec *executionContext) unmarshalOString2ᚕstringᚄ(ctx context.Context, v any) ([]string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]string, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNString2string(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalOString2ᚕstringᚄ(ctx context.Context, sel ast.SelectionSet, v []string) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalNString2string(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
 func (ec *executionContext) unmarshalOString2ᚖstring(ctx context.Context, v any) (*string, error) {
 	if v == nil {
 		return nil, nil
@@ -2989,6 +3909,13 @@ func (ec *executionContext) marshalOTask2ᚖgftᚋinternalᚋtaskᚋmodelᚐTask
 		return graphql.Null
 	}
 	return ec._Task(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalO_Entity2githubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚋfedruntimeᚐEntity(ctx context.Context, sel ast.SelectionSet, v fedruntime.Entity) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec.__Entity(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalO__EnumValue2ᚕgithubᚗcomᚋ99designsᚋgqlgenᚋgraphqlᚋintrospectionᚐEnumValueᚄ(ctx context.Context, sel ast.SelectionSet, v []introspection.EnumValue) graphql.Marshaler {
