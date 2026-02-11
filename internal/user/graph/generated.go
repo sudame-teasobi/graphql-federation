@@ -41,6 +41,7 @@ type Config struct {
 type ResolverRoot interface {
 	Entity() EntityResolver
 	Query() QueryResolver
+	User() UserResolver
 }
 
 type DirectiveRoot struct {
@@ -52,7 +53,6 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		Node               func(childComplexity int, id string) int
 		User               func(childComplexity int, id string) int
 		Users              func(childComplexity int) int
 		__resolve__service func(childComplexity int) int
@@ -80,7 +80,9 @@ type EntityResolver interface {
 type QueryResolver interface {
 	Users(ctx context.Context) ([]*model.User, error)
 	User(ctx context.Context, id string) (*model.User, error)
-	Node(ctx context.Context, id string) (model.Node, error)
+}
+type UserResolver interface {
+	Tasks(ctx context.Context, obj *model.User) ([]*model.Task, error)
 }
 
 type executableSchema struct {
@@ -114,17 +116,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.Entity.FindUserByID(childComplexity, args["id"].(string)), true
 
-	case "Query.node":
-		if e.complexity.Query.Node == nil {
-			break
-		}
-
-		args, err := ec.field_Query_node_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.complexity.Query.Node(childComplexity, args["id"].(string)), true
 	case "Query.user":
 		if e.complexity.Query.User == nil {
 			break
@@ -295,12 +286,13 @@ type User implements Node @key(fields: "id") {
 type Query {
   users: [User!]!
   user(id: ID!): User
-  node(id: ID!): Node
 }
 
-type Task implements Node {
+type Task @key(fields: "id", resolvable: false) {
   id: ID!
 }
+
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key", "@shareable"])
 `, BuiltIn: false},
 	{Name: "../../../federation/directives.graphql", Input: `
 	directive @authenticated on FIELD_DEFINITION | OBJECT | INTERFACE | SCALAR | ENUM
@@ -355,7 +347,7 @@ type Task implements Node {
 `, BuiltIn: true},
 	{Name: "../../../federation/entity.graphql", Input: `
 # a union of all types that use the @key directive
-union _Entity = User
+union _Entity = Task | User
 
 # fake type to build resolver interfaces for users to implement
 type Entity {
@@ -408,17 +400,6 @@ func (ec *executionContext) field_Query__entities_args(ctx context.Context, rawA
 		return nil, err
 	}
 	args["representations"] = arg0
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_node_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id", ec.unmarshalNID2string)
-	if err != nil {
-		return nil, err
-	}
-	args["id"] = arg0
 	return args, nil
 }
 
@@ -614,47 +595,6 @@ func (ec *executionContext) fieldContext_Query_user(ctx context.Context, field g
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_user_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Query_node(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Query_node,
-		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Node(ctx, fc.Args["id"].(string))
-		},
-		nil,
-		ec.marshalONode2gftᚋinternalᚋuserᚋmodelᚐNode,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_Query_node(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Query",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("FieldContext.Child cannot be called on type INTERFACE")
-		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_node_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -937,7 +877,7 @@ func (ec *executionContext) _User_tasks(ctx context.Context, field graphql.Colle
 		field,
 		ec.fieldContext_User_tasks,
 		func(ctx context.Context) (any, error) {
-			return obj.Tasks, nil
+			return ec.resolvers.User().Tasks(ctx, obj)
 		},
 		nil,
 		ec.marshalNTask2ᚕᚖgftᚋinternalᚋuserᚋmodelᚐTaskᚄ,
@@ -950,8 +890,8 @@ func (ec *executionContext) fieldContext_User_tasks(_ context.Context, field gra
 	fc = &graphql.FieldContext{
 		Object:     "User",
 		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
+		IsMethod:   true,
+		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			switch field.Name {
 			case "id":
@@ -2453,13 +2393,6 @@ func (ec *executionContext) _Node(ctx context.Context, sel ast.SelectionSet, obj
 			return graphql.Null
 		}
 		return ec._User(ctx, sel, obj)
-	case model.Task:
-		return ec._Task(ctx, sel, &obj)
-	case *model.Task:
-		if obj == nil {
-			return graphql.Null
-		}
-		return ec._Task(ctx, sel, obj)
 	default:
 		if typedObj, ok := obj.(graphql.Marshaler); ok {
 			return typedObj
@@ -2480,6 +2413,13 @@ func (ec *executionContext) __Entity(ctx context.Context, sel ast.SelectionSet, 
 			return graphql.Null
 		}
 		return ec._User(ctx, sel, obj)
+	case model.Task:
+		return ec._Task(ctx, sel, &obj)
+	case *model.Task:
+		if obj == nil {
+			return graphql.Null
+		}
+		return ec._Task(ctx, sel, obj)
 	default:
 		if typedObj, ok := obj.(graphql.Marshaler); ok {
 			return typedObj
@@ -2617,25 +2557,6 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
-		case "node":
-			field := field
-
-			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._Query_node(ctx, field)
-				return res
-			}
-
-			rrm := func(ctx context.Context) graphql.Marshaler {
-				return ec.OperationContext.RootResolverMiddleware(ctx,
-					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "_entities":
 			field := field
 
@@ -2711,7 +2632,7 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 	return out
 }
 
-var taskImplementors = []string{"Task", "Node"}
+var taskImplementors = []string{"Task", "_Entity"}
 
 func (ec *executionContext) _Task(ctx context.Context, sel ast.SelectionSet, obj *model.Task) graphql.Marshaler {
 	fields := graphql.CollectFields(ec.OperationContext, sel, taskImplementors)
@@ -2764,18 +2685,49 @@ func (ec *executionContext) _User(ctx context.Context, sel ast.SelectionSet, obj
 		case "id":
 			out.Values[i] = ec._User_id(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "name":
 			out.Values[i] = ec._User_name(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "tasks":
-			out.Values[i] = ec._User_tasks(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._User_tasks(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
 			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -3873,13 +3825,6 @@ func (ec *executionContext) marshalOBoolean2ᚖbool(ctx context.Context, sel ast
 	_ = ctx
 	res := graphql.MarshalBoolean(*v)
 	return res
-}
-
-func (ec *executionContext) marshalONode2gftᚋinternalᚋuserᚋmodelᚐNode(ctx context.Context, sel ast.SelectionSet, v model.Node) graphql.Marshaler {
-	if v == nil {
-		return graphql.Null
-	}
-	return ec._Node(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalOString2string(ctx context.Context, v any) (string, error) {

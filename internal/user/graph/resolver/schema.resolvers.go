@@ -8,10 +8,8 @@ package resolver
 import (
 	"context"
 	"fmt"
-	"gft/internal/user"
 	"gft/internal/user/graph"
 	"gft/internal/user/model"
-	"strings"
 )
 
 // Users is the resolver for the users field.
@@ -28,22 +26,21 @@ func (r *queryResolver) User(ctx context.Context, id string) (*model.User, error
 	return u, nil
 }
 
-// Node is the resolver for the node field.
-func (r *queryResolver) Node(ctx context.Context, id string) (model.Node, error) {
-	t, _, found := strings.Cut(id, ":")
-	if !found {
-		return nil, fmt.Errorf("failed to extract type from id: %s", id)
+// Tasks is the resolver for the tasks field.
+func (r *userResolver) Tasks(ctx context.Context, obj *model.User) ([]*model.Task, error) {
+	tasks := []*model.Task{}
+	for _, tid := range obj.TaskIds {
+		tasks = append(tasks, &model.Task{ID: tid})
 	}
 
-	switch t {
-	case user.Type:
-		return r.User(ctx, id)
-	default:
-		return nil, fmt.Errorf("unsupported type: %s", t)
-	}
+	return tasks, nil
 }
 
 // Query returns graph.QueryResolver implementation.
 func (r *Resolver) Query() graph.QueryResolver { return &queryResolver{r} }
 
+// User returns graph.UserResolver implementation.
+func (r *Resolver) User() graph.UserResolver { return &userResolver{r} }
+
 type queryResolver struct{ *Resolver }
+type userResolver struct{ *Resolver }

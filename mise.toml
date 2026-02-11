@@ -1,2 +1,4 @@
 [tools]
+"github:apollographql/router" = "latest"
+"github:apollographql/rover" = "latest"
 "go:github.com/99designs/gqlgen" = "latest"

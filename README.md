@@ -1,20 +1,30 @@
 # GraphQL Federation Teasobi
 
-GraphQL Federation を学習・実験するためのリポジトリ。
+GraphQL Federation を学習・実験するためのリポジトリ。Go + gqlgen で構成された2つの GraphQL サブグラフサービスを Apollo Federation v2 で統合している。
 
 ## プロジェクト構成
 
-2つの独立した GraphQL サービスで構成されています。
+2つのサブグラフサービスと、それらを統合する Apollo Router で構成されています。
 
 | サービス | ポート | 説明 |
 |---------|--------|------|
-| User Service | 8080 | ユーザー情報の管理 |
-| Task Service | 8081 | タスク情報の管理 |
+| User Service | 8080 | ユーザー情報の管理（`User` エンティティを所有） |
+| Task Service | 8081 | タスク情報の管理（`Task` エンティティを所有） |
+| Apollo Router | 4000 | サブグラフを統合するゲートウェイ |
+
+### エンティティ関係
+
+- **User Service**: `User` エンティティを所有。`User.tasks` フィールドで Task を参照
+- **Task Service**: `Task` エンティティを所有。`Task.user` フィールドで User を参照
+
+各サービスは他サービスのエンティティをスタブ型（`resolvable: false`）として定義し、`@key(fields: "id")` で Federation のエンティティ解決をサポートしている。
 
 ## 技術スタック
 
 - Go 1.25
-- [gqlgen](https://github.com/99designs/gqlgen) v0.17.86 - GraphQL サーバー生成
+- [gqlgen](https://github.com/99designs/gqlgen) v0.17.86 - GraphQL サーバー生成（Federation v2 対応）
+- [Apollo Router](https://www.apollographql.com/docs/router/) - Federation ゲートウェイ
+- [Rover](https://www.apollographql.com/docs/rover/) - スーパーグラフのコンポジション
 - [mise](https://mise.jdx.dev/) - ツールバージョン管理
 
 ## ディレクトリ構造
@@ -30,29 +40,35 @@ GraphQL Federation を学習・実験するためのリポジトリ。
 │       └── tasks.json         # 初期タスクデータ
 ├── internal/
 │   ├── user/
-│   │   ├── schema.graphql     # User サービスの GraphQL スキーマ
+│   │   ├── schema.graphql     # User サブグラフの GraphQL スキーマ
 │   │   ├── repository.go      # データリポジトリ
 │   │   ├── id.go              # タイプ定数
 │   │   └── graph/
-│   │       ├── generated.go   # 生成コード
+│   │       ├── generated.go   # 自動生成コード（編集禁止）
+│   │       ├── federation.go  # 自動生成 Federation ランタイム（編集禁止）
 │   │       ├── model/
-│   │       │   └── models_gen.go
+│   │       │   └── models_gen.go  # 自動生成モデル（編集禁止）
 │   │       └── resolver/
 │   │           ├── resolver.go
-│   │           └── schema.resolvers.go
+│   │           ├── schema.resolvers.go
+│   │           └── entity.resolvers.go  # Federation エンティティリゾルバ
 │   └── task/
-│       ├── schema.graphql     # Task サービスの GraphQL スキーマ
+│       ├── schema.graphql     # Task サブグラフの GraphQL スキーマ
 │       ├── repository.go      # データリポジトリ
 │       ├── id.go              # タイプ定数
 │       └── graph/
-│           ├── generated.go   # 生成コード
+│           ├── generated.go   # 自動生成コード（編集禁止）
+│           ├── federation.go  # 自動生成 Federation ランタイム（編集禁止）
 │           ├── model/
-│           │   └── models_gen.go
+│           │   └── models_gen.go  # 自動生成モデル（編集禁止）
 │           └── resolver/
 │               ├── resolver.go
-│               └── schema.resolvers.go
+│               ├── schema.resolvers.go
+│               └── entity.resolvers.go  # Federation エンティティリゾルバ
+├── supergraph.yaml            # Apollo Router のサブグラフ構成
+├── supergraph.graphql         # コンポーズ済みスーパーグラフスキーマ
 ├── gqlgen.user.yml            # User サービスの gqlgen 設定
-├── gqlgen.todo.yml            # Task サービスの gqlgen 設定
+├── gqlgen.task.yml            # Task サービスの gqlgen 設定
 ├── generate.go                # コード生成エントリーポイント
 └── mise.toml                  # mise 設定
 ```
@@ -71,7 +87,7 @@ go mod download
 
 ### コード生成
 
-GraphQL スキーマを変更した後、以下のコマンドでコードを再生成します。
+GraphQL スキーマを変更した後、以下のコマンドでコードを再生成します。gqlgen によるコード生成に加え、Rover によるスーパーグラフのコンポジションも実行されます。
 
 ```bash
 go generate
@@ -85,6 +101,9 @@ go run ./cmd/user
 
 # Task Service（別ターミナルで実行）
 go run ./cmd/task
+
+# Apollo Router（別ターミナルで実行、両サブグラフ起動後）
+router --supergraph supergraph.graphql
 ```
 
 ### GraphQL Playground
@@ -96,7 +115,7 @@ go run ./cmd/task
 
 ### クエリ例
 
-**User Service:**
+**User Service（直接）:**
 ```graphql
 query {
   users {
@@ -113,7 +132,7 @@ query {
 }
 ```
 
-**Task Service:**
+**Task Service（直接）:**
 ```graphql
 query {
   tasks {
@@ -130,48 +149,81 @@ query {
 }
 ```
 
+**Apollo Router 経由（Federation クエリ）:**
+```graphql
+# ユーザーとそのタスクを一括取得
+query {
+  users {
+    id
+    name
+    tasks {
+      id
+      title
+    }
+  }
+}
+
+# タスクと担当ユーザーを一括取得
+query {
+  tasks {
+    id
+    title
+    user {
+      id
+      name
+    }
+  }
+}
+```
+
 ## GraphQL スキーマ
 
-### User Service
+### User Service（サブグラフ）
 
 ```graphql
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key", "@shareable"])
+
 interface Node {
   id: ID!
 }
 
-type User implements Node {
+type User implements Node @key(fields: "id") {
   id: ID!
   name: String!
+  tasks: [Task!]!
+}
+
+type Task @key(fields: "id", resolvable: false) {
+  id: ID!
 }
 
 type Query {
   users: [User!]!
   user(id: ID!): User
-  node(id: ID!): Node
 }
 ```
 
-### Task Service
+### Task Service（サブグラフ）
 
 ```graphql
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key", "@shareable"])
+
 interface Node {
   id: ID!
 }
 
-type Task implements Node {
+type Task implements Node @key(fields: "id") {
   id: ID!
   title: String!
+  user: User!
+}
+
+type User @key(fields: "id", resolvable: false) {
+  id: ID!
 }
 
 type Query {
-  node(id: ID!): Node
   task(id: ID!): Task
   tasks: [Task!]!
 }
 ```
-
-## 今後の予定
-
-- [ ] GraphQL Federation の有効化
-- [ ] Apollo Router / Gateway の導入
-- [ ] サービス間のエンティティ参照（Task に User フィールドを追加）

@@ -9,11 +9,12 @@ type Task implements Node @key(fields: "id") {
 }
 
 type Query {
-  node(id: ID!): Node
   task(id: ID!): Task
   tasks: [Task!]!
 }
 
-type User implements Node {
+type User @key(fields: "id", resolvable: false) {
   id: ID!
 }
+
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key", "@shareable"])

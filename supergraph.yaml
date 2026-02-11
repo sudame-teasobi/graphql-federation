@@ -1,0 +1,10 @@
+federation_version: 2
+subgraphs:
+  user:
+    routing_url: http://localhost:8080/query
+    schema:
+      file: ./internal/user/schema.graphql
+  task:
+    routing_url: http://localhost:8081/query
+    schema:
+      file: ./internal/task/schema.graphql
