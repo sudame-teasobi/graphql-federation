@@ -14,15 +14,33 @@ import (
 
 // User is the resolver for the user field.
 func (r *queryResolver) User(ctx context.Context, id string) (*model.User, error) {
-	panic(fmt.Errorf("not implemented: User - user"))
+	u, err := r.Repo.GetByID(id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get a user by id: %s with error: %w", id, err)
+	}
+	return u, nil
 }
 
 // Users is the resolver for the users field.
 func (r *queryResolver) Users(ctx context.Context) ([]*model.User, error) {
-	panic(fmt.Errorf("not implemented: Users - users"))
+	return r.Repo.GetAll(), nil
+}
+
+// Tasks is the resolver for the tasks field.
+func (r *userResolver) Tasks(ctx context.Context, obj *model.User) ([]*model.Task, error) {
+	tasks := []*model.Task{}
+	for _, tid := range obj.TaskIds {
+		tasks = append(tasks, &model.Task{ID: tid})
+	}
+
+	return tasks, nil
 }
 
 // Query returns graph.QueryResolver implementation.
 func (r *Resolver) Query() graph.QueryResolver { return &queryResolver{r} }
 
+// User returns graph.UserResolver implementation.
+func (r *Resolver) User() graph.UserResolver { return &userResolver{r} }
+
 type queryResolver struct{ *Resolver }
+type userResolver struct{ *Resolver }
